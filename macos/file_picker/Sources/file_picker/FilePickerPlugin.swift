@@ -42,6 +42,12 @@ public class FilePickerPlugin: NSObject, FlutterPlugin {
         case "saveFile":
             handleSaveFile(call, result: result)
             
+        case "startAccessingBookmark":
+            handleStartAccessingBookmark(call, result: result)
+
+        case "createBookmarkForPath":
+            handleCreateBookmarkForPath(call, result: result)
+            
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -169,7 +175,24 @@ public class FilePickerPlugin: NSObject, FlutterPlugin {
             }
             
             if let url = dialog.url {
-                result(url.path)
+                let path = url.path
+                var bookmarkBase64 = ""
+                do {
+                    let bookmarkData = try url.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    )
+                    bookmarkBase64 = bookmarkData.base64EncodedString()
+                } catch {
+                    print("Failed to create bookmark: \(error)")
+                }
+                
+                if !bookmarkBase64.isEmpty {
+                    result("\(path)|\(bookmarkBase64)")
+                } else {
+                    result(path)
+                }
                 return
             }
             
@@ -258,6 +281,61 @@ public class FilePickerPlugin: NSObject, FlutterPlugin {
     
     /// Gets the parent NSWindow
     private func getFlutterWindow() -> NSWindow? {
+        if let keyWindow = NSApp.keyWindow, keyWindow.isVisible {
+            return keyWindow
+        }
         return registrar.view?.window
+    }
+
+    private func handleStartAccessingBookmark(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let bookmarkBase64 = args["bookmark"] as? String else {
+            result(false)
+            return
+        }
+        
+        guard let bookmarkData = Data(base64Encoded: bookmarkBase64) else {
+            result(false)
+            return
+        }
+        
+        do {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmarkData,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            
+            let success = url.startAccessingSecurityScopedResource()
+            print("startAccessingSecurityScopedResource success: \(success) for \(url.path)")
+            result(success)
+        } catch {
+            print("Failed to resolve bookmark: \(error)")
+            result(false)
+        }
+    }
+
+    private func handleCreateBookmarkForPath(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String,
+              !path.isEmpty else {
+            result(nil)
+            return
+        }
+
+        do {
+            let url = URL(fileURLWithPath: path)
+            let bookmarkData = try url.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            result(bookmarkData.base64EncodedString())
+        } catch {
+            print("Failed to create bookmark for path: \(error)")
+            result(nil)
+        }
     }
 }
